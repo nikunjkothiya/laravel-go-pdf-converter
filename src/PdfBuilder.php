@@ -213,6 +213,71 @@ class PdfBuilder
     }
 
     /**
+     * Set custom TTF font path
+     */
+    public function font(string $path): self
+    {
+        $this->options['font'] = $path;
+        return $this;
+    }
+
+    /**
+     * Add text watermark
+     */
+    public function watermarkText(string $text, float $alpha = 0.2): self
+    {
+        $this->options['watermark_text'] = $text;
+        $this->options['watermark_alpha'] = $alpha;
+        return $this;
+    }
+
+    /**
+     * Add image watermark
+     */
+    public function watermarkImage(string $path, float $alpha = 0.2): self
+    {
+        $this->options['watermark_image'] = $path;
+        $this->options['watermark_alpha'] = $alpha;
+        return $this;
+    }
+
+    /**
+     * Set table header background color (hex)
+     */
+    public function headerColor(string $hex): self
+    {
+        $this->options['header_color'] = $hex;
+        return $this;
+    }
+
+    /**
+     * Set alternating row color (hex)
+     */
+    public function rowColor(string $hex): self
+    {
+        $this->options['row_color'] = $hex;
+        return $this;
+    }
+
+    /**
+     * Set table border color (hex)
+     */
+    public function borderColor(string $hex): self
+    {
+        $this->options['border_color'] = $hex;
+        return $this;
+    }
+
+    /**
+     * Toggle grid lines
+     */
+    public function showGridLines(bool $show = true): self
+    {
+        $this->options['grid_lines'] = $show;
+        return $this;
+    }
+
+    /**
      * Add custom option
      */
     public function option(string $key, mixed $value): self

@@ -42,7 +42,9 @@ type FormatType string
 
 const (
 	FormatCSV   FormatType = "csv"
+	FormatTSV   FormatType = "tsv"
 	FormatXLSX  FormatType = "xlsx"
+	FormatXLSM  FormatType = "xlsm"
 	FormatXLS   FormatType = "xls"
 	FormatPPTX  FormatType = "pptx"
 	FormatPPT   FormatType = "ppt"
@@ -55,8 +57,12 @@ func DetectFormat(filename string) FormatType {
 	switch ext {
 	case ".csv":
 		return FormatCSV
+	case ".tsv":
+		return FormatTSV
 	case ".xlsx":
 		return FormatXLSX
+	case ".xlsm":
+		return FormatXLSM
 	case ".xls":
 		return FormatXLS
 	case ".pptx":

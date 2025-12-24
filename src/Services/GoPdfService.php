@@ -20,7 +20,7 @@ class GoPdfService
     protected array $defaults;
     protected array $timeouts;
 
-    protected const SUPPORTED_FORMATS = ['csv', 'xlsx', 'xls', 'pptx', 'ppt'];
+    protected const SUPPORTED_FORMATS = ['csv', 'tsv', 'xlsx', 'xls', 'xlsm', 'pptx', 'ppt'];
 
     public function __construct(
         ?string $binaryPath = null,
@@ -40,7 +40,7 @@ class GoPdfService
             'header_row' => true,
         ], $defaults);
         $this->timeouts = array_merge([
-            'single' => 120,
+            'single' => 300,
             'batch' => 600,
         ], $timeouts);
     }
@@ -388,6 +388,32 @@ class GoPdfService
 
         if ($this->libreOfficePath) {
             $command[] = '--libreoffice=' . $this->libreOfficePath;
+        }
+
+        // Advanced features
+        if (isset($options['font'])) {
+            $command[] = '--font=' . $options['font'];
+        }
+        if (isset($options['watermark_text'])) {
+            $command[] = '--watermark-text=' . $options['watermark_text'];
+        }
+        if (isset($options['watermark_image'])) {
+            $command[] = '--watermark-image=' . $options['watermark_image'];
+        }
+        if (isset($options['watermark_alpha'])) {
+            $command[] = '--watermark-alpha=' . $options['watermark_alpha'];
+        }
+        if (isset($options['header_color'])) {
+            $command[] = '--header-color=' . $options['header_color'];
+        }
+        if (isset($options['row_color'])) {
+            $command[] = '--row-color=' . $options['row_color'];
+        }
+        if (isset($options['border_color'])) {
+            $command[] = '--border-color=' . $options['border_color'];
+        }
+        if (isset($options['grid_lines'])) {
+            $command[] = '--grid-lines=' . ($options['grid_lines'] ? 'true' : 'false');
         }
     }
 

@@ -144,6 +144,18 @@ type Options struct {
 	Quality      string // "fast", "balanced", "best"
 	HeaderText   string
 	FooterText   string
+	
+	// Advanced Features
+	CustomFontPath string
+	WatermarkText  string
+	WatermarkImage string
+	WatermarkAlpha float64
+	
+	// Table Styling
+	HeaderColor    string // Hex color
+	RowColor       string // Hex color for even rows
+	BorderColor    string // Hex color
+	ShowGridLines  bool
 }
 
 // DefaultOptions returns sensible default options
@@ -158,6 +170,8 @@ func DefaultOptions() Options {
 		AutoWidth:   true,
 		Compression: true,
 		Quality:     "balanced",
+		WatermarkAlpha: 0.2,
+		ShowGridLines: true,
 	}
 }
 

@@ -52,6 +52,18 @@ func main() {
 	headerText := flag.String("header-text", "", "Global header text")
 	footerText := flag.String("footer-text", "", "Global footer text")
 	
+	// Advanced options
+	customFont := flag.String("font", "", "Path to custom TTF font")
+	watermarkText := flag.String("watermark-text", "", "Watermark text")
+	watermarkImage := flag.String("watermark-image", "", "Path to watermark image")
+	watermarkAlpha := flag.Float64("watermark-alpha", 0.2, "Watermark opacity (0.0-1.0)")
+	
+	// Styling options
+	headerColor := flag.String("header-color", "", "Header background color (hex)")
+	rowColor := flag.String("row-color", "", "Alternating row color (hex)")
+	borderColor := flag.String("border-color", "", "Border color (hex)")
+	gridLines := flag.Bool("grid-lines", true, "Show table grid lines")
+	
 	// Batch processing
 	batchFiles := flag.String("batch", "", "Comma-separated list of input files")
 	outputDir := flag.String("output-dir", "", "Output directory for batch processing")
@@ -81,6 +93,18 @@ func main() {
 	opts.HeaderRow = *headerRow
 	opts.HeaderText = *headerText
 	opts.FooterText = *footerText
+	
+	// Advanced options
+	opts.CustomFontPath = *customFont
+	opts.WatermarkText = *watermarkText
+	opts.WatermarkImage = *watermarkImage
+	opts.WatermarkAlpha = *watermarkAlpha
+	
+	// Styling options
+	opts.HeaderColor = *headerColor
+	opts.RowColor = *rowColor
+	opts.BorderColor = *borderColor
+	opts.ShowGridLines = *gridLines
 	
 	// Parse page size
 	switch strings.ToLower(*pageSize) {
@@ -130,6 +154,16 @@ func main() {
 func runSingleConversion(inputPath, outputPath string, opts pdf.Options, formatFlag, libreOfficePath string, native, jsonOutput, verbose bool) {
 	start := time.Now()
 	
+	// Progress callback
+	progressCallback := func(percent int) {
+		if jsonOutput {
+			// Print progress to stderr to avoid polluting stdout JSON
+			fmt.Fprintf(os.Stderr, "{\"progress\": %d}\n", percent)
+		} else if verbose {
+			fmt.Fprintf(os.Stderr, "\rProgress: %d%%", percent)
+		}
+	}
+	
 	// Detect format
 	var format converter.FormatType
 	if formatFlag == "auto" {
@@ -145,11 +179,12 @@ func runSingleConversion(inputPath, outputPath string, opts pdf.Options, formatF
 	var err error
 	
 	switch format {
-	case converter.FormatCSV:
+	case converter.FormatCSV, converter.FormatTSV:
 		csvConverter := converter.NewCSVConverter()
+		csvConverter.SetProgressCallback(progressCallback)
 		err = csvConverter.Convert(inputPath, outputPath, opts)
 		
-	case converter.FormatXLSX, converter.FormatXLS:
+	case converter.FormatXLSX, converter.FormatXLSM, converter.FormatXLS:
 		// For XLSX, try native first. For XLS, try LibreOffice first if available.
 		if format == converter.FormatXLS {
 			pptxConverter := converter.NewPPTXConverter()
@@ -164,6 +199,7 @@ func runSingleConversion(inputPath, outputPath string, opts pdf.Options, formatF
 				if err := loConverter.ConvertTo(inputPath, tempXlsx, "xlsx"); err == nil {
 					defer os.Remove(tempXlsx)
 					excelConverter := converter.NewExcelConverter()
+			excelConverter.SetProgressCallback(progressCallback)
 					err = excelConverter.Convert(tempXlsx, outputPath, opts)
 				} else {
 					// Fallback to direct LO conversion if temp conversion fails
@@ -174,10 +210,12 @@ func runSingleConversion(inputPath, outputPath string, opts pdf.Options, formatF
 				err = loConverter.Convert(inputPath, outputPath)
 			} else {
 				excelConverter := converter.NewExcelConverter()
+			excelConverter.SetProgressCallback(progressCallback)
 				err = excelConverter.Convert(inputPath, outputPath, opts)
 			}
 		} else {
 			excelConverter := converter.NewExcelConverter()
+			excelConverter.SetProgressCallback(progressCallback)
 			err = excelConverter.Convert(inputPath, outputPath, opts)
 		}
 		

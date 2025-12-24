@@ -13,14 +13,26 @@ import (
 
 // ExcelConverter handles Excel (XLSX/XLS) to PDF conversion
 type ExcelConverter struct {
-	opts pdf.Options
+	opts    pdf.Options
+	maxRows int // Maximum rows to process (0 = unlimited)
+	onProgress func(int)
 }
+
+// MaxRowsDefault is the default maximum number of rows to process
+// This prevents memory issues and timeouts with very large files
+const MaxRowsDefault = 10000
 
 // NewExcelConverter creates a new Excel converter
 func NewExcelConverter() *ExcelConverter {
 	return &ExcelConverter{
-		opts: pdf.DefaultOptions(),
+		opts:    pdf.DefaultOptions(),
+		maxRows: MaxRowsDefault,
 	}
+}
+
+// SetProgressCallback sets the callback for progress reporting
+func (c *ExcelConverter) SetProgressCallback(callback func(int)) {
+	c.onProgress = callback
 }
 
 // SupportedExtensions returns extensions handled by this converter
@@ -70,6 +82,10 @@ func (c *ExcelConverter) Convert(inputPath, outputPath string, opts pdf.Options)
 	if err != nil {
 		return errors.Wrap(err, errors.ErrConversionFailed, "Failed to create PDF builder")
 	}
+	
+	if c.onProgress != nil {
+		builder.SetProgressCallback(c.onProgress)
+	}
 
 	// Get all sheets
 	sheets := f.GetSheetList()
@@ -98,7 +114,14 @@ func (c *ExcelConverter) Convert(inputPath, outputPath string, opts pdf.Options)
 			continue // Skip empty sheets
 		}
 
-		// Calculate column widths
+		// Apply row limit to prevent memory issues and timeouts
+		truncated := false
+		if c.maxRows > 0 && len(rows) > c.maxRows {
+			rows = rows[:c.maxRows]
+			truncated = true
+		}
+
+		// Calculate column widths (sample first 100 rows for performance)
 		colWidths := c.calculateColumnWidths(rows, opts)
 
 		// Prepare headers and data
@@ -116,6 +139,11 @@ func (c *ExcelConverter) Convert(inputPath, outputPath string, opts pdf.Options)
 			}
 		} else {
 			dataRows = rows
+		}
+
+		// Add truncation notice if file was too large
+		if truncated {
+			dataRows = append(dataRows, []string{fmt.Sprintf("... (Showing first %d rows, file truncated for performance)", c.maxRows)})
 		}
 
 		// Draw the table
@@ -150,6 +178,10 @@ func (c *ExcelConverter) ConvertWithOptions(inputPath, outputPath string, opts p
 	builder, err := pdf.NewBuilder(opts)
 	if err != nil {
 		return errors.Wrap(err, errors.ErrConversionFailed, "Failed to create PDF builder")
+	}
+	
+	if c.onProgress != nil {
+		builder.SetProgressCallback(c.onProgress)
 	}
 
 	// If no sheets specified, use all sheets
@@ -285,17 +317,17 @@ func (c *ExcelConverter) calculateColumnWidths(rows [][]string, opts pdf.Options
 			if j >= maxCols {
 				continue
 			}
-			// Estimate width: ~7 points per character + padding
-			width := float64(len(cell))*7 + 10
+			// Estimate width: ~6 points per character + padding
+			width := float64(len(cell))*6 + 8
 			if width > colMaxWidths[j] {
 				colMaxWidths[j] = width
 			}
 		}
 	}
 
-	// Apply min/max constraints
-	const minColWidth = 30.0
-	const maxColWidth = 200.0
+	// Apply min/max constraints - use reasonable minimums to prevent truncation
+	const minColWidth = 40.0  // Minimum to show ~6 chars
+	const maxColWidth = 180.0 // Maximum for any single column
 
 	for i := range colMaxWidths {
 		if colMaxWidths[i] < minColWidth {
@@ -317,8 +349,9 @@ func (c *ExcelConverter) calculateColumnWidths(rows [][]string, opts pdf.Options
 		scale := contentWidth / totalWidth
 		for i := range colMaxWidths {
 			colMaxWidths[i] *= scale
-			if colMaxWidths[i] < 20 {
-				colMaxWidths[i] = 20
+			// Ensure minimum readable width (at least 35 points = ~5-6 chars)
+			if colMaxWidths[i] < 35 {
+				colMaxWidths[i] = 35
 			}
 		}
 	}

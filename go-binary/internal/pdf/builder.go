@@ -16,6 +16,13 @@ type Builder struct {
 	currentY  float64
 	pageNum   int
 	fontLoaded bool
+	
+	onProgress func(int)
+}
+
+// SetProgressCallback sets the callback for progress reporting
+func (b *Builder) SetProgressCallback(callback func(int)) {
+	b.onProgress = callback
 }
 
 // NewBuilder creates a new PDF builder with the given options
@@ -40,7 +47,17 @@ func NewBuilder(opts Options) (*Builder, error) {
 
 // loadFont loads the specified font or falls back to built-in
 func (b *Builder) loadFont() error {
-	// Try to use system fonts first
+	// 1. Try custom font if specified
+	if b.options.CustomFontPath != "" {
+		if _, err := os.Stat(b.options.CustomFontPath); err == nil {
+			if err := b.pdf.AddTTFFont("default", b.options.CustomFontPath); err == nil {
+				b.fontLoaded = true
+				return b.pdf.SetFont("default", "", b.options.FontSize)
+			}
+		}
+	}
+
+	// 2. Try to use system fonts first
 	fontPaths := []string{
 		"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 		"/usr/share/fonts/TTF/DejaVuSans.ttf",
@@ -57,8 +74,7 @@ func (b *Builder) loadFont() error {
 		}
 	}
 
-	// Fall back to built-in font (limited Unicode support)
-	// gopdf doesn't have built-in fonts, so we embed a minimal font
+	// 3. Fall back to built-in font (limited Unicode support)
 	return b.embedMinimalFont()
 }
 
@@ -90,6 +106,9 @@ func (b *Builder) AddPage() {
 	b.currentY = b.options.Margin
 	b.pageNum++
 	
+	// Draw watermark first (behind content)
+	b.drawWatermark()
+	
 	// Draw global header and footer
 	b.drawHeader()
 	b.drawFooter()
@@ -99,10 +118,6 @@ func (b *Builder) AddPage() {
 }
 
 func (b *Builder) drawHeader() {
-	if b.options.HeaderText == "" {
-		return
-	}
-	
 	style := DefaultStyle()
 	style.FontSize = 8
 	style.TextColor = ColorGray
@@ -110,10 +125,12 @@ func (b *Builder) drawHeader() {
 	b.SetFont(style.FontFamily, style.FontStyle, style.FontSize)
 	b.SetTextColor(style.TextColor)
 	
-	// Draw header text at the top
-	b.pdf.SetX(b.options.Margin)
-	b.pdf.SetY(b.options.Margin - 10)
-	b.pdf.Cell(nil, b.options.HeaderText)
+	// Draw custom header text at the top (left aligned)
+	if b.options.HeaderText != "" {
+		b.pdf.SetX(b.options.Margin)
+		b.pdf.SetY(b.options.Margin - 10)
+		b.pdf.Cell(nil, b.options.HeaderText)
+	}
 }
 
 func (b *Builder) drawFooter() {
@@ -191,7 +208,56 @@ func (b *Builder) SetXY(x, y float64) {
 	b.currentY = y
 }
 
-// Cell draws a cell with text
+// drawWatermark draws a watermark on the current page
+func (b *Builder) drawWatermark() {
+	if b.options.WatermarkText == "" && b.options.WatermarkImage == "" {
+		return
+	}
+
+	// Save current state
+	// b.pdf.SetAlpha(b.options.WatermarkAlpha, "Normal")
+	// defer b.pdf.SetAlpha(1.0, "Normal")
+
+	pageW := b.options.PageSize.Width
+	pageH := b.options.PageSize.Height
+	if b.options.Orientation == Landscape {
+		pageW, pageH = pageH, pageW
+	}
+
+	// Draw Image Watermark
+	if b.options.WatermarkImage != "" {
+		if _, err := os.Stat(b.options.WatermarkImage); err == nil {
+			// Center image
+			imgW := 200.0 // Default width
+			imgH := 200.0 // Default height
+			x := (pageW - imgW) / 2
+			y := (pageH - imgH) / 2
+			b.pdf.Image(b.options.WatermarkImage, x, y, &gopdf.Rect{W: imgW, H: imgH})
+		}
+	}
+
+	// Draw Text Watermark
+	if b.options.WatermarkText != "" {
+		b.pdf.SetTextColor(200, 200, 200) // Light gray
+		
+		// Calculate font size based on page width
+		fontSize := pageW / 10
+		b.pdf.SetFont("default", "", fontSize)
+		
+		textWidth := b.MeasureTextWidth(b.options.WatermarkText)
+		x := (pageW - textWidth) / 2
+		y := pageH / 2
+
+		// Rotate text 45 degrees
+		b.pdf.Rotate(45, x+textWidth/2, y)
+		b.pdf.SetX(x)
+		b.pdf.SetY(y)
+		b.pdf.Text(b.options.WatermarkText)
+		b.pdf.RotateReset()
+	}
+}
+
+// Cell draws a cell with text, supporting text wrapping for long content
 func (b *Builder) Cell(w, h float64, text string, style Style) error {
 	x := b.pdf.GetX()
 	y := b.currentY
@@ -212,28 +278,36 @@ func (b *Builder) Cell(w, h float64, text string, style Style) error {
 	// Draw text with padding and alignment
 	b.SetTextColor(style.TextColor)
 	
-	textWidth := b.MeasureTextWidth(text)
 	maxWidth := w - (style.Padding * 2)
-	if textWidth > maxWidth {
-		text = b.truncateText(text, maxWidth)
-		textWidth = b.MeasureTextWidth(text)
-	}
-
-	var textX float64
-	switch style.Alignment {
-	case AlignCenter:
-		textX = x + (w-textWidth)/2
-	case AlignRight:
-		textX = x + w - textWidth - style.Padding
-	default: // AlignLeft
-		textX = x + style.Padding
-	}
-
+	lineHeight := style.FontSize * 1.2 // Line spacing
+	
+	// Wrap text into multiple lines if needed
+	lines := b.wrapText(text, maxWidth)
+	
+	// Draw each line
 	textY := y + style.Padding + style.FontSize
+	for i, line := range lines {
+		// Only draw lines that fit within cell height
+		lineY := textY + float64(i)*lineHeight
+		if lineY > y+h-style.Padding {
+			break // Stop if we exceed cell height
+		}
+		
+		lineWidth := b.MeasureTextWidth(line)
+		var textX float64
+		switch style.Alignment {
+		case AlignCenter:
+			textX = x + (w-lineWidth)/2
+		case AlignRight:
+			textX = x + w - lineWidth - style.Padding
+		default: // AlignLeft
+			textX = x + style.Padding
+		}
 
-	b.pdf.SetX(textX)
-	b.pdf.SetY(textY)
-	b.pdf.Text(text)
+		b.pdf.SetX(textX)
+		b.pdf.SetY(lineY)
+		b.pdf.Text(line)
+	}
 
 	// Move to next cell position
 	b.pdf.SetX(x + w)
@@ -241,7 +315,84 @@ func (b *Builder) Cell(w, h float64, text string, style Style) error {
 	return nil
 }
 
-// truncateText truncates text to fit within maxWidth
+// wrapText splits text into multiple lines that fit within maxWidth
+func (b *Builder) wrapText(text string, maxWidth float64) []string {
+	if text == "" {
+		return []string{""}
+	}
+	
+	// Check if text fits in one line
+	textWidth := b.MeasureTextWidth(text)
+	if textWidth <= maxWidth {
+		return []string{text}
+	}
+	
+	var lines []string
+	words := strings.Fields(text)
+	
+	if len(words) == 0 {
+		return []string{text}
+	}
+	
+	currentLine := ""
+	for _, word := range words {
+		testLine := currentLine
+		if testLine != "" {
+			testLine += " "
+		}
+		testLine += word
+		
+		testWidth := b.MeasureTextWidth(testLine)
+		if testWidth <= maxWidth {
+			currentLine = testLine
+		} else {
+			// Current line is full, start a new line
+			if currentLine != "" {
+				lines = append(lines, currentLine)
+			}
+			// Check if single word is too long
+			wordWidth := b.MeasureTextWidth(word)
+			if wordWidth > maxWidth {
+				// Break word into chunks
+				currentLine = b.breakLongWord(word, maxWidth, &lines)
+			} else {
+				currentLine = word
+			}
+		}
+	}
+	
+	// Add remaining text
+	if currentLine != "" {
+		lines = append(lines, currentLine)
+	}
+	
+	// Limit to max 3 lines to prevent cell overflow
+	if len(lines) > 3 {
+		lines = lines[:3]
+		if len(lines[2]) > 3 {
+			lines[2] = lines[2][:len(lines[2])-3] + "..."
+		}
+	}
+	
+	return lines
+}
+
+// breakLongWord breaks a long word that doesn't fit in one line
+func (b *Builder) breakLongWord(word string, maxWidth float64, lines *[]string) string {
+	result := ""
+	for _, char := range word {
+		testStr := result + string(char)
+		if b.MeasureTextWidth(testStr) > maxWidth {
+			*lines = append(*lines, result)
+			result = string(char)
+		} else {
+			result = testStr
+		}
+	}
+	return result
+}
+
+// truncateText truncates text to fit within maxWidth (used for single-line cells)
 func (b *Builder) truncateText(text string, maxWidth float64) string {
 	if !b.fontLoaded {
 		// Rough estimate: 6 points per character
@@ -305,7 +456,22 @@ func (b *Builder) NeedsNewPage(height float64) bool {
 func (b *Builder) DrawTable(headers []string, rows [][]string, colWidths []float64) error {
 	style := DefaultStyle()
 	headerStyle := HeaderStyle()
-	rowHeight := style.FontSize + (style.Padding * 2) + 4
+
+	// Apply custom styles if set
+	if b.options.HeaderColor != "" {
+		headerStyle.FillColor = ParseHexColor(b.options.HeaderColor)
+	}
+	if b.options.BorderColor != "" {
+		c := ParseHexColor(b.options.BorderColor)
+		style.BorderColor = c
+		headerStyle.BorderColor = c
+	}
+	style.HasBorder = b.options.ShowGridLines
+	headerStyle.HasBorder = b.options.ShowGridLines
+
+	// Row height to accommodate up to 3 lines of wrapped text
+	lineHeight := style.FontSize * 1.2
+	rowHeight := (lineHeight * 3) + (style.Padding * 2) + 4
 
 	// Calculate total table width for centering
 	tableWidth := 0.0
@@ -336,7 +502,19 @@ func (b *Builder) DrawTable(headers []string, rows [][]string, colWidths []float
 
 	// Draw data rows
 	b.SetFont(style.FontFamily, style.FontStyle, style.FontSize)
+	totalRows := len(rows)
+	lastProgress := -1
+	
 	for rowIdx, row := range rows {
+		// Report progress
+		if b.onProgress != nil {
+			percent := int(float64(rowIdx) * 100 / float64(totalRows))
+			if percent != lastProgress && percent%5 == 0 { // Report every 5%
+				b.onProgress(percent)
+				lastProgress = percent
+			}
+		}
+
 		// Check if we need a new page
 		if b.NeedsNewPage(rowHeight) {
 			b.AddPage()
@@ -354,9 +532,13 @@ func (b *Builder) DrawTable(headers []string, rows [][]string, colWidths []float
 			}
 		}
 
-		rowStyle := TableStyle()
+		rowStyle := style // Use base style with custom border color
 		if rowIdx%2 == 1 {
-			rowStyle.FillColor = ColorLightGray
+			if b.options.RowColor != "" {
+				rowStyle.FillColor = ParseHexColor(b.options.RowColor)
+			} else {
+				rowStyle.FillColor = ColorLightGray
+			}
 			rowStyle.HasBackground = true
 		}
 		

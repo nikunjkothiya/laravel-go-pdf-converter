@@ -15,6 +15,7 @@ import (
 type CSVConverter struct {
 	opts          pdf.Options
 	maxSampleRows int // Number of rows to sample for column width calculation
+	onProgress    func(int)
 }
 
 // NewCSVConverter creates a new CSV converter
@@ -23,6 +24,11 @@ func NewCSVConverter() *CSVConverter {
 		opts:          pdf.DefaultOptions(),
 		maxSampleRows: 100,
 	}
+}
+
+// SetProgressCallback sets the callback for progress reporting
+func (c *CSVConverter) SetProgressCallback(callback func(int)) {
+	c.onProgress = callback
 }
 
 // SupportedExtensions returns extensions handled by this converter
@@ -72,7 +78,22 @@ func (c *CSVConverter) Convert(inputPath, outputPath string, opts pdf.Options) e
 	defer file.Close()
 
 	// Create buffered reader for efficient streaming
-	reader := csv.NewReader(bufio.NewReaderSize(file, 64*1024)) // 64KB buffer
+	bufferedReader := bufio.NewReaderSize(file, 64*1024) // 64KB buffer
+	
+	// Skip UTF-8 BOM if present
+	bom := make([]byte, 3)
+	n, err := bufferedReader.Read(bom)
+	if err != nil && err != io.EOF {
+		return errors.NewWithFile(errors.ErrConversionFailed, "Failed to read file", inputPath)
+	}
+	// Check for UTF-8 BOM (0xEF, 0xBB, 0xBF)
+	if n < 3 || bom[0] != 0xEF || bom[1] != 0xBB || bom[2] != 0xBF {
+		// No BOM, reset the reader by seeking to start
+		file.Seek(0, 0)
+		bufferedReader = bufio.NewReaderSize(file, 64*1024)
+	}
+	
+	reader := csv.NewReader(bufferedReader)
 	reader.FieldsPerRecord = -1
 	reader.LazyQuotes = true
 	reader.TrimLeadingSpace = true
@@ -105,6 +126,10 @@ func (c *CSVConverter) Convert(inputPath, outputPath string, opts pdf.Options) e
 	builder, err := pdf.NewBuilder(opts)
 	if err != nil {
 		return errors.Wrap(err, errors.ErrConversionFailed, "Failed to create PDF builder")
+	}
+	
+	if c.onProgress != nil {
+		builder.SetProgressCallback(c.onProgress)
 	}
 
 	// Add first page
@@ -213,9 +238,9 @@ func (c *CSVConverter) calculateColumnWidths(records [][]string, opts pdf.Option
 		}
 	}
 
-	// Apply minimum width constraints
-	const minColWidth = 30.0
-	const maxColWidth = 200.0
+	// Apply minimum width constraints - use reasonable minimums to prevent truncation
+	const minColWidth = 40.0  // Minimum to show ~6 chars
+	const maxColWidth = 180.0 // Maximum for any single column
 
 	for i := range colMaxWidths {
 		if colMaxWidths[i] < minColWidth {
@@ -237,9 +262,9 @@ func (c *CSVConverter) calculateColumnWidths(records [][]string, opts pdf.Option
 		scale := contentWidth / totalWidth
 		for i := range colMaxWidths {
 			colMaxWidths[i] *= scale
-			// Ensure minimum after scaling
-			if colMaxWidths[i] < 20 {
-				colMaxWidths[i] = 20
+			// Ensure minimum readable width (at least 35 points = ~5-6 chars)
+			if colMaxWidths[i] < 35 {
+				colMaxWidths[i] = 35
 			}
 		}
 	}
@@ -309,6 +334,10 @@ func (c *StreamingCSVConverter) ConvertStreaming(inputPath, outputPath string, o
 	builder, err := pdf.NewBuilder(opts)
 	if err != nil {
 		return errors.Wrap(err, errors.ErrConversionFailed, "Failed to create PDF builder")
+	}
+	
+	if c.onProgress != nil {
+		builder.SetProgressCallback(c.onProgress)
 	}
 
 	builder.AddPage()

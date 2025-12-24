@@ -6,9 +6,10 @@
 - 💾 **Low memory footprint** – handles large files without exhausting memory  
 - 🔧 **Zero external dependencies** – no LibreOffice required for most conversions  
 - ⚡ **Queue-ready** – dispatch conversions to background jobs  
-- 🎨 **Professional Table Rendering** – grid lines, smart alignment, and centered layouts for Excel/CSV  
-- 🌈 **Smart Color Fallback** – automatically fixes white-on-white text in PowerPoint conversions  
-- 📝 **Global Headers & Footers** – add custom text and mandatory "Page X of Y" numbering
+- 🎨 **Professional Table Rendering** – grid lines, smart alignment, and centered layouts  
+- 📝 **Text Wrapping** – long content automatically wraps to multiple lines (no data loss!)  
+- 🌈 **Smart Color Fallback** – automatically fixes white-on-white text in PowerPoint  
+- 📄 **Global Headers & Footers** – custom text with automatic "Page X of Y" numbering
 
 ---
 
@@ -241,6 +242,28 @@ PdfConverter::pptx('presentation.pptx')
     ->convert();
 ```
 
+### Advanced Styling & Features
+
+Customize the look and feel of your PDFs with advanced options:
+
+```php
+PdfConverter::csv('data.csv')
+    ->toPdf('report.pdf')
+    // Custom Fonts
+    ->font(resource_path('fonts/Roboto-Regular.ttf'))
+    
+    // Watermarks
+    ->watermarkText('CONFIDENTIAL', 0.1) // Text, Opacity (0.0 - 1.0)
+    ->watermarkImage(public_path('logo.png'), 0.2) // Image, Opacity
+    
+    // Table Styling
+    ->headerColor('4A90E2')   // Custom header background (Hex)
+    ->rowColor('F5F5F5')      // Alternating row color
+    ->borderColor('333333')   // Border color
+    ->showGridLines(false)    // Toggle grid lines
+    ->convert();
+```
+
 ### Batch Processing
 
 Convert multiple files at once with parallel processing:
@@ -255,6 +278,8 @@ $result = PdfConverter::batch([
 ->outputDir('/path/to/output')
 ->workers(4)              // Parallel workers (default: CPU cores)
 ->landscape()             // Apply to all files
+->headerText('Batch Report')
+->footerText('Confidential')
 ->convert();
 
 // Returns summary
@@ -302,7 +327,7 @@ The jobs include:
 # Basic conversion
 php artisan pdf:convert input.csv output.pdf
 
-# With options
+# With options (works for CSV, TSV, XLSX, XLSM, PPTX)
 php artisan pdf:convert input.xlsx output.pdf \
     --page-size=Letter \
     --landscape \
@@ -311,10 +336,9 @@ php artisan pdf:convert input.xlsx output.pdf \
     --native \
     --header-text="My Report" \
     --footer-text="Copyright 2025"
-```
-
 # Async via queue
 php artisan pdf:convert input.csv output.pdf --queue
+```
 
 #### Install/Update Binary
 
@@ -354,7 +378,7 @@ return [
 
     // Timeout settings (seconds)
     'timeout' => [
-        'single' => 120,
+        'single' => 300,
         'batch' => 600,
     ],
 
@@ -392,7 +416,6 @@ GOPDF_LOG_CHANNEL=stack
 ---
 
 ## Performance
-
 ### Benchmarks
 
 Tested on standard hardware (2-core CPU, 8GB RAM) using samples files:
@@ -403,7 +426,16 @@ Tested on standard hardware (2-core CPU, 8GB RAM) using samples files:
 | **PPTX** | 15 MB | ~5s | Native Go conversion |
 | **PPT** | 2 MB | ~1.6s | Legacy PowerPoint |
 | **Excel** | 0.5 MB | ~1.2s | Native XLSX conversion |
+| **Excel** | 14 MB | ~102s | Large file with row limit |
 | **CSV** | 1 KB | ~10ms | Small file overhead |
+
+### Large File Handling
+
+> **Note**: For files with more than 10,000 rows, only the first 10,000 rows are converted to prevent memory issues and timeouts. A notice is added to the PDF indicating the file was truncated.
+
+If you need to convert files with more rows, consider:
+- Splitting the file into smaller chunks
+- Increasing the timeout: `->timeout(600)`
 
 ### Memory Usage
 
@@ -426,6 +458,16 @@ Tested on standard hardware (2-core CPU, 8GB RAM) using samples files:
 | PPTX | ✅ | PowerPoint 2007+ format (native Go, or LibreOffice for full fidelity) |
 | PPT | ✅ | Legacy PowerPoint (text extraction native, full fidelity with LibreOffice) |
 | ODP | ⚠️ | Requires LibreOffice |
+
+### Text Wrapping
+
+Long content in cells automatically wraps to multiple lines to prevent data loss.
+
+- **Automatic Wrapping**: Text is split into up to 3 lines per cell.
+- **Smart Breaking**: Long words are broken at character level if needed.
+- **Dynamic Row Height**: Rows automatically expand to fit wrapped text.
+
+> **Note**: If content exceeds 3 lines, it will be truncated with `...` to maintain table readability.
 
 > **Note**: For PPT/PPTX files, the package will:
 > 1. **With LibreOffice**: Full visual fidelity conversion (layouts, backgrounds, images)
