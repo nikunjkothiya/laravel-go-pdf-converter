@@ -1,0 +1,51 @@
+# Composer
+/vendor
+composer.lock
+
+# PHP
+.phpunit.result.cache
+.php_cs.cache
+.php-cs-fixer.cache
+
+# Laravel
+.env
+.env.testing
+
+# Go
+/go-binary/gopdfconv
+/go-binary/dist/
+/go-binary/vendor/
+/go-binary/coverage.out
+/go-binary/coverage.html
+
+# Binaries - ignore local builds but keep pre-built platform binaries
+/bin/gopdfconv
+!/bin/gopdfconv-*
+!/bin/.gitkeep
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test output
+/tests/temp/
+/storage/
+
+# Test data files (don't commit large test files)
+*.csv
+*.xlsx
+*.xls
+*.pptx
+*.ppt
+*_output.pdf
+!tests/fixtures/*.csv
+!tests/fixtures/*.xlsx
+sample_input/
+sample_output/
+
