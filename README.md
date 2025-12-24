@@ -55,7 +55,7 @@
 ## Requirements
 
 - PHP 8.1+
-- Laravel 10.x or 11.x
+- Laravel 10.x, 11.x, or 12.x
 - Go 1.21+ (only for building from source)
 
 ---
