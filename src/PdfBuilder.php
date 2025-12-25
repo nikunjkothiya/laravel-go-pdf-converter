@@ -204,11 +204,20 @@ class PdfBuilder
     }
 
     /**
-     * Set global footer text
+     * Set global footer text (Left aligned)
      */
     public function footerText(string $text): self
     {
         $this->options['footer_text'] = $text;
+        return $this;
+    }
+
+    /**
+     * Enable/Disable auto-orientation (Smart Layout)
+     */
+    public function autoOrientation(bool $enable = true): self
+    {
+        $this->options['auto_orientation'] = $enable;
         return $this;
     }
 

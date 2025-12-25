@@ -415,6 +415,11 @@ class GoPdfService
         if (isset($options['grid_lines'])) {
             $command[] = '--grid-lines=' . ($options['grid_lines'] ? 'true' : 'false');
         }
+
+        // Smart Layout
+        if (isset($options['auto_orientation'])) {
+            $command[] = '--auto-orientation=' . ($options['auto_orientation'] ? 'true' : 'false');
+        }
     }
 
     /**

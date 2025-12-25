@@ -120,7 +120,14 @@ func (c *CSVConverter) Convert(inputPath, outputPath string, opts pdf.Options) e
 	}
 
 	// Calculate optimal column widths
-	colWidths := c.calculateColumnWidths(allRecords, opts)
+	colWidths, shouldSwitchToLandscape := c.calculateColumnWidths(allRecords, opts)
+	
+	// Apply auto-orientation if needed
+	if shouldSwitchToLandscape {
+		opts.Orientation = pdf.Landscape
+		// Re-optimize widths for new orientation
+		colWidths, _ = c.calculateColumnWidths(allRecords, opts)
+	}
 
 	// Create PDF builder
 	builder, err := pdf.NewBuilder(opts)
@@ -203,9 +210,10 @@ func (c *CSVConverter) detectDelimiter(filePath string) rune {
 }
 
 // calculateColumnWidths calculates optimal column widths based on content
-func (c *CSVConverter) calculateColumnWidths(records [][]string, opts pdf.Options) []float64 {
+// Returns widths and a boolean indicating if orientation should switch to Landscape
+func (c *CSVConverter) calculateColumnWidths(records [][]string, opts pdf.Options) ([]float64, bool) {
 	if len(records) == 0 {
-		return nil
+		return nil, false
 	}
 
 	// Find the maximum number of columns
@@ -217,59 +225,178 @@ func (c *CSVConverter) calculateColumnWidths(records [][]string, opts pdf.Option
 	}
 
 	if maxCols == 0 {
-		return nil
+		return nil, false
 	}
 
-	// Calculate max width for each column (character count based)
+	// Calculate max width for each column using accurate font measurement
 	colMaxWidths := make([]float64, maxCols)
 	sampleSize := c.maxSampleRows
 	if len(records) < sampleSize {
 		sampleSize = len(records)
 	}
 
+	// Create a temporary builder to access font measurement
+	builder, err := pdf.NewBuilder(opts)
+	if err != nil {
+		// Fallback to estimation if font loading fails
+		// We ignore auto-orientation in fallback for simplicity
+		return c.calculateColumnWidthsFallback(records, opts), false
+	}
+
 	for i := 0; i < sampleSize; i++ {
 		row := records[i]
 		for j, cell := range row {
-			// Estimate width: ~6 points per character
-			width := float64(len(cell)) * 6
+			// Accurate measurement + padding (left+right)
+			width := builder.MeasureTextWidth(cell) + 6.0 // 3.0 padding per side
 			if width > colMaxWidths[j] {
 				colMaxWidths[j] = width
 			}
 		}
 	}
 
-	// Apply minimum width constraints - use reasonable minimums to prevent truncation
-	const minColWidth = 40.0  // Minimum to show ~6 chars
-	const maxColWidth = 180.0 // Maximum for any single column
+	// Apply minimum width constraints
+	const minColWidth = 40.0
+	const maxColWidth = 250.0 // Increased max width for better readability
 
 	for i := range colMaxWidths {
 		if colMaxWidths[i] < minColWidth {
 			colMaxWidths[i] = minColWidth
 		}
-		if colMaxWidths[i] > maxColWidth {
-			colMaxWidths[i] = maxColWidth
+		// Soft cap: allow going over if page permits, but clamp for initial calculation
+	}
+	
+	// Check if we should switch to Landscape
+	shouldSwitch := false
+	if opts.AutoOrientation && opts.Orientation == pdf.Portrait {
+		totalWidth := 0.0
+		for _, w := range colMaxWidths {
+			totalWidth += w
+		}
+		
+		// If content is wider than Portrait content width but fits in Landscape, switch
+		portraitWidth := opts.PageSize.Width - (opts.Margin * 2) // Current is portrait
+		landscapeWidth := opts.PageSize.Height - (opts.Margin * 2)
+		
+		if totalWidth > portraitWidth && totalWidth <= landscapeWidth * 1.2 { 
+			// Allow 20% overflow for landscape candidate to account for compression success
+			shouldSwitch = true
 		}
 	}
 
-	// Scale to fit page width
+	return c.optimizeWidthsForPage(colMaxWidths, opts.ContentWidth()), shouldSwitch
+}
+
+// optimizeWidthsForPage fits column widths to the page using weighted compression
+func (c *CSVConverter) optimizeWidthsForPage(widths []float64, availableWidth float64) []float64 {
 	totalWidth := 0.0
-	for _, w := range colMaxWidths {
+	for _, w := range widths {
 		totalWidth += w
 	}
 
-	contentWidth := opts.ContentWidth()
-	if totalWidth > contentWidth {
-		scale := contentWidth / totalWidth
-		for i := range colMaxWidths {
-			colMaxWidths[i] *= scale
-			// Ensure minimum readable width (at least 35 points = ~5-6 chars)
-			if colMaxWidths[i] < 35 {
-				colMaxWidths[i] = 35
+	if totalWidth <= availableWidth {
+		return widths
+	}
+
+	// Calculate how much we need to shave off
+	overflow := totalWidth - availableWidth
+	
+	// Identify "wide" candidates (e.g. > 80pt) to preserve small data columns
+	// Date columns are usually around 60-80pt, so anything above 80 is fair game using 80 as threshold
+	threshold := 80.0 
+	
+	var wideIndices []int
+	totalWideWidth := 0.0
+	
+	newWidths := make([]float64, len(widths))
+	copy(newWidths, widths)
+	
+	for i, w := range widths {
+		if w > threshold {
+			wideIndices = append(wideIndices, i)
+			totalWideWidth += w
+		}
+	}
+	
+	// Strategy 1: Reduce only wide columns proportionally
+	if len(wideIndices) > 0 && totalWideWidth > (overflow + (float64(len(wideIndices)) * threshold)) {
+		// We have enough "excess fat" in wide columns to absorb the overflow
+		// while keeping them above threshold.
+		
+		// Calculate reduction ratio for wide columns
+		// We want: (TotalWide - Reduction) + TotalNarrow = Available
+		// Reduction = Overflow
+		
+		// Distribute overflow weighted by size
+		for _, i := range wideIndices {
+			// Weight = my_width / total_wide_width
+			// share = overflow * weight
+			weight := widths[i] / totalWideWidth
+			share := overflow * weight
+			newWidths[i] -= share
+		}
+		return newWidths
+	}
+	
+	// Strategy 2: If Strategy 1 fails (overflow is huge), fall back to global scaling
+	// but try to respect a hard floor for data columns.
+	
+	scale := availableWidth / totalWidth
+	
+	for i := range newWidths {
+		newWidths[i] *= scale
+		if newWidths[i] < 35 {
+			newWidths[i] = 35
+		}
+	}
+	
+	// Check if floors pushed us over again
+	newTotal := 0.0
+	for _, w := range newWidths {
+		newTotal += w
+	}
+	
+	if newTotal > availableWidth {
+		// Brutal truncate last resort
+		finalScale := availableWidth / newTotal
+		for i := range newWidths {
+			newWidths[i] *= finalScale
+		}
+	}
+	
+	return newWidths
+}
+
+func (c *CSVConverter) calculateColumnWidthsFallback(records [][]string, opts pdf.Options) []float64 {
+	if len(records) == 0 {
+		return nil
+	}
+	
+	// Basic character counting estimation
+	maxCols := 0
+	for _, row := range records {
+		if len(row) > maxCols {
+			maxCols = len(row)
+		}
+	}
+	
+	colMaxWidths := make([]float64, maxCols)
+	sampleSize := c.maxSampleRows
+	if len(records) < sampleSize {
+		sampleSize = len(records)
+	}
+	
+	for i := 0; i < sampleSize; i++ {
+		row := records[i]
+		for j, cell := range row {
+			width := float64(len(cell)) * 6 // Estimate
+			if width > colMaxWidths[j] {
+				colMaxWidths[j] = width
 			}
 		}
 	}
-
-	return colMaxWidths
+	
+	// Apply standard scaling
+	return c.optimizeWidthsForPage(colMaxWidths, opts.ContentWidth())
 }
 
 // StreamingCSVConverter provides memory-efficient conversion for large files
@@ -321,7 +448,13 @@ func (c *StreamingCSVConverter) ConvertStreaming(inputPath, outputPath string, o
 		return errors.NewWithFile(errors.ErrInvalidFormat, "CSV file is empty", inputPath)
 	}
 
-	colWidths := c.calculateColumnWidths(sampleRows, opts)
+	colWidths, shouldSwitchToLandscape := c.calculateColumnWidths(sampleRows, opts)
+	
+	if shouldSwitchToLandscape {
+		opts.Orientation = pdf.Landscape
+		// Re-calc for landscape
+		colWidths, _ = c.calculateColumnWidths(sampleRows, opts)
+	}
 
 	// Reset file for second pass
 	file.Seek(0, 0)

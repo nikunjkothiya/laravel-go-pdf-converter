@@ -144,6 +144,8 @@ type Options struct {
 	Quality      string // "fast", "balanced", "best"
 	HeaderText   string
 	FooterText   string
+
+	AutoOrientation bool
 	
 	// Advanced Features
 	CustomFontPath string
@@ -172,8 +174,11 @@ func DefaultOptions() Options {
 		Quality:     "balanced",
 		WatermarkAlpha: 0.2,
 		ShowGridLines: true,
+		AutoOrientation: true,
 	}
 }
+
+
 
 // GetPageRect returns the gopdf.Rect for the configured page size and orientation
 func (o Options) GetPageRect() *gopdf.Rect {

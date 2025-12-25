@@ -35,6 +35,7 @@ Thumbs.db
 
 # Test output
 /tests/temp/
+/tests/outputs/
 /storage/
 
 # Test data files (don't commit large test files)
@@ -43,9 +44,10 @@ Thumbs.db
 *.xls
 *.pptx
 *.ppt
-*_output.pdf
-!tests/fixtures/*.csv
-!tests/fixtures/*.xlsx
+*.pdf
+!/bin/gopdfconv-*
+!/tests/fixtures/*.csv
+!/tests/fixtures/*.xlsx
 sample_input/
 sample_output/
 
