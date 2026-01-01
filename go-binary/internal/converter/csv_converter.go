@@ -63,7 +63,7 @@ func (c *CSVConverter) Validate(inputPath string) error {
 	return nil
 }
 
-// Convert performs the CSV to PDF conversion
+// Convert performs the CSV to PDF conversion with memory-efficient streaming
 func (c *CSVConverter) Convert(inputPath, outputPath string, opts pdf.Options) error {
 	// Validate input
 	if err := c.Validate(inputPath); err != nil {
@@ -93,41 +93,64 @@ func (c *CSVConverter) Convert(inputPath, outputPath string, opts pdf.Options) e
 		bufferedReader = bufio.NewReaderSize(file, 64*1024)
 	}
 	
+	// Detect delimiter
+	delimiter := c.detectDelimiter(inputPath)
+	
 	reader := csv.NewReader(bufferedReader)
 	reader.FieldsPerRecord = -1
 	reader.LazyQuotes = true
 	reader.TrimLeadingSpace = true
+	reader.Comma = delimiter
 
-	// Detect delimiter (comma, tab, semicolon)
-	reader.Comma = c.detectDelimiter(inputPath)
-
-	// Read all records (for now, will optimize for streaming later)
-	var allRecords [][]string
-	for {
+	// First pass: sample rows for column width calculation (memory efficient)
+	var sampleRecords [][]string
+	for i := 0; i < c.maxSampleRows; i++ {
 		record, err := reader.Read()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			// Skip malformed rows but continue
 			continue
 		}
-		allRecords = append(allRecords, record)
+		sampleRecords = append(sampleRecords, record)
 	}
 
-	if len(allRecords) == 0 {
+	if len(sampleRecords) == 0 {
 		return errors.NewWithFile(errors.ErrInvalidFormat, "CSV file is empty", inputPath)
 	}
 
-	// Calculate optimal column widths
-	colWidths, shouldSwitchToLandscape := c.calculateColumnWidths(allRecords, opts)
+	// Calculate optimal column widths from sample
+	colWidths, shouldSwitchToLandscape := c.calculateColumnWidths(sampleRecords, opts)
 	
 	// Apply auto-orientation if needed
 	if shouldSwitchToLandscape {
 		opts.Orientation = pdf.Landscape
-		// Re-optimize widths for new orientation
-		colWidths, _ = c.calculateColumnWidths(allRecords, opts)
+		colWidths, _ = c.calculateColumnWidths(sampleRecords, opts)
 	}
+
+	// Prepare headers
+	var headers []string
+	if opts.HeaderRow && len(sampleRecords) > 0 {
+		headers = sampleRecords[0]
+	}
+
+	// Reset file for second pass
+	file.Seek(0, 0)
+	bufferedReader = bufio.NewReaderSize(file, 64*1024)
+	
+	// Skip BOM again if present
+	bom = make([]byte, 3)
+	n, _ = bufferedReader.Read(bom)
+	if n < 3 || bom[0] != 0xEF || bom[1] != 0xBB || bom[2] != 0xBF {
+		file.Seek(0, 0)
+		bufferedReader = bufio.NewReaderSize(file, 64*1024)
+	}
+	
+	reader = csv.NewReader(bufferedReader)
+	reader.FieldsPerRecord = -1
+	reader.LazyQuotes = true
+	reader.TrimLeadingSpace = true
+	reader.Comma = delimiter
 
 	// Create PDF builder
 	builder, err := pdf.NewBuilder(opts)
@@ -142,21 +165,11 @@ func (c *CSVConverter) Convert(inputPath, outputPath string, opts pdf.Options) e
 	// Add first page
 	builder.AddPage()
 
-	// Separate headers and data
-	var headers []string
-	var dataRows [][]string
+	// Create CSV row iterator adapter
+	csvIterator := &csvRowIterator{reader: reader}
 
-	if opts.HeaderRow && len(allRecords) > 0 {
-		headers = allRecords[0]
-		if len(allRecords) > 1 {
-			dataRows = allRecords[1:]
-		}
-	} else {
-		dataRows = allRecords
-	}
-
-	// Draw the table
-	if err := builder.DrawTable(headers, dataRows, colWidths); err != nil {
+	// Draw table with streaming
+	if err := builder.DrawTableStreaming(headers, csvIterator, colWidths, opts.HeaderRow); err != nil {
 		return errors.Wrap(err, errors.ErrConversionFailed, "Failed to draw table")
 	}
 
@@ -166,6 +179,25 @@ func (c *CSVConverter) Convert(inputPath, outputPath string, opts pdf.Options) e
 	}
 
 	return nil
+}
+
+// csvRowIterator adapts csv.Reader to RowIterator interface
+type csvRowIterator struct {
+	reader     *csv.Reader
+	currentRow []string
+	err        error
+}
+
+func (c *csvRowIterator) Next() bool {
+	c.currentRow, c.err = c.reader.Read()
+	if c.err == io.EOF {
+		return false
+	}
+	return c.err == nil
+}
+
+func (c *csvRowIterator) Columns() ([]string, error) {
+	return c.currentRow, c.err
 }
 
 // detectDelimiter attempts to detect the CSV delimiter
@@ -254,9 +286,15 @@ func (c *CSVConverter) calculateColumnWidths(records [][]string, opts pdf.Option
 		}
 	}
 
-	// Apply minimum width constraints
-	const minColWidth = 40.0
-	const maxColWidth = 250.0 // Increased max width for better readability
+	// Use custom min/max from options, or defaults
+	minColWidth := opts.MinColumnWidth
+	maxColWidth := opts.MaxColumnWidth
+	if minColWidth <= 0 {
+		minColWidth = 40.0
+	}
+	if maxColWidth <= 0 {
+		maxColWidth = 250.0 // Increased max width for better readability
+	}
 
 	for i := range colMaxWidths {
 		if colMaxWidths[i] < minColWidth {

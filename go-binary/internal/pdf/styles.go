@@ -154,27 +154,49 @@ type Options struct {
 	WatermarkAlpha float64
 	
 	// Table Styling
-	HeaderColor    string // Hex color
-	RowColor       string // Hex color for even rows
-	BorderColor    string // Hex color
-	ShowGridLines  bool
+	HeaderColor      string  // Hex color for header background
+	HeaderTextColor  string  // Hex color for header text
+	RowColor         string  // Hex color for even rows (alternating)
+	RowTextColor     string  // Hex color for row text
+	BorderColor      string  // Hex color for borders
+	ShowGridLines    bool
+	
+	// Row & Cell Customization
+	RowHeight        float64 // Custom row height (0 = auto)
+	HeaderHeight     float64 // Custom header row height (0 = auto)
+	CellPadding      float64 // Cell padding in points (default 4)
+	MinColumnWidth   float64 // Minimum column width (default 40)
+	MaxColumnWidth   float64 // Maximum column width (default 180)
+	
+	// Font Styling
+	HeaderFontSize   float64 // Header font size (0 = use FontSize + 1)
+	HeaderFontBold   bool    // Make header text bold (default true)
 }
 
 // DefaultOptions returns sensible default options
 func DefaultOptions() Options {
 	return Options{
-		PageSize:    PageA4,
-		Orientation: Portrait,
-		FontFamily:  "Arial",
-		FontSize:    10,
-		Margin:      20,
-		HeaderRow:   true,
-		AutoWidth:   true,
-		Compression: true,
-		Quality:     "balanced",
-		WatermarkAlpha: 0.2,
-		ShowGridLines: true,
+		PageSize:        PageA4,
+		Orientation:     Portrait,
+		FontFamily:      "Arial",
+		FontSize:        10,
+		Margin:          20,
+		HeaderRow:       true,
+		AutoWidth:       true,
+		Compression:     true,
+		Quality:         "balanced",
+		WatermarkAlpha:  0.2,
+		ShowGridLines:   true,
 		AutoOrientation: true,
+		// Row & Cell defaults
+		RowHeight:       0,   // Auto
+		HeaderHeight:    0,   // Auto
+		CellPadding:     4,
+		MinColumnWidth:  40,
+		MaxColumnWidth:  180,
+		// Font defaults
+		HeaderFontSize:  0,    // Auto (FontSize + 1)
+		HeaderFontBold:  true,
 	}
 }
 

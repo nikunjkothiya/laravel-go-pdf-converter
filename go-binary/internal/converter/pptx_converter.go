@@ -174,9 +174,13 @@ func (c *PPTXConverter) convertNative(inputPath, outputPath string, opts pdf.Opt
 	// Get slide dimensions from presentation.xml
 	slideWidth, slideHeight := c.getSlideSize(r)
 
+	// For PowerPoint, use only general options (page size, margins, watermark, header/footer)
+	// Ignore table-specific customization options (they only apply to spreadsheets)
+	pptOpts := c.sanitizeOptionsForPPT(opts)
+	
 	// Create PDF with landscape orientation for slides
-	opts.Orientation = pdf.Landscape
-	builder, err := pdf.NewBuilder(opts)
+	pptOpts.Orientation = pdf.Landscape
+	builder, err := pdf.NewBuilder(pptOpts)
 	if err != nil {
 		return errors.Wrap(err, errors.ErrConversionFailed, "Failed to create PDF builder")
 	}
@@ -189,7 +193,7 @@ func (c *PPTXConverter) convertNative(inputPath, outputPath string, opts pdf.Opt
 			builder.AddPage()
 		}
 
-		c.renderSlideEnhanced(builder, slide, opts, slideWidth, slideHeight, tempDir)
+		c.renderSlideEnhanced(builder, slide, pptOpts, slideWidth, slideHeight, tempDir)
 	}
 
 	if err := builder.Save(outputPath); err != nil {
@@ -872,4 +876,46 @@ func (c *PPTXConverter) GetLibreOfficePath() string {
 // SetUseLibreOffice enables or disables LibreOffice usage
 func (c *PPTXConverter) SetUseLibreOffice(use bool) {
 	c.useLibreOffice = use
+}
+
+// sanitizeOptionsForPPT returns options with only general settings applied
+// Table-specific customization options (styling, row/cell settings) are reset to defaults
+// as they only apply to spreadsheet formats (CSV, XLS, XLSX)
+func (c *PPTXConverter) sanitizeOptionsForPPT(opts pdf.Options) pdf.Options {
+	// Start with default options
+	pptOpts := pdf.DefaultOptions()
+	
+	// Keep general page options
+	pptOpts.PageSize = opts.PageSize
+	pptOpts.Orientation = opts.Orientation
+	pptOpts.Margin = opts.Margin
+	pptOpts.FontFamily = opts.FontFamily
+	pptOpts.FontSize = opts.FontSize
+	
+	// Keep metadata options
+	pptOpts.Title = opts.Title
+	pptOpts.Author = opts.Author
+	pptOpts.Subject = opts.Subject
+	
+	// Keep header/footer options
+	pptOpts.HeaderText = opts.HeaderText
+	pptOpts.FooterText = opts.FooterText
+	
+	// Keep watermark options
+	pptOpts.CustomFontPath = opts.CustomFontPath
+	pptOpts.WatermarkText = opts.WatermarkText
+	pptOpts.WatermarkImage = opts.WatermarkImage
+	pptOpts.WatermarkAlpha = opts.WatermarkAlpha
+	
+	// Keep quality options
+	pptOpts.Compression = opts.Compression
+	pptOpts.Quality = opts.Quality
+	
+	// Ignore table-specific options (use defaults):
+	// - HeaderColor, HeaderTextColor, RowColor, RowTextColor, BorderColor
+	// - ShowGridLines, RowHeight, HeaderHeight, CellPadding
+	// - MinColumnWidth, MaxColumnWidth, HeaderFontSize, HeaderFontBold
+	// - HeaderRow, AutoWidth, AutoOrientation
+	
+	return pptOpts
 }
