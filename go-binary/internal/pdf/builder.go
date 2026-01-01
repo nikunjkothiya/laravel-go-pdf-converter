@@ -113,25 +113,32 @@ func (b *Builder) AddPage() {
 	b.drawHeader()
 	b.drawFooter()
 	
-	// Reset Y to below header
-	b.currentY = b.options.Margin + 20
+	// Reset Y to below header (add extra space if header text exists)
+	if b.options.HeaderText != "" {
+		b.currentY = b.options.Margin + 25
+	} else {
+		b.currentY = b.options.Margin
+	}
 }
 
 func (b *Builder) drawHeader() {
+	// Only draw header if custom text is provided
+	if b.options.HeaderText == "" {
+		return
+	}
+	
 	style := DefaultStyle()
-	style.FontSize = 8
-	style.TextColor = ColorGray
+	style.FontSize = 10
+	style.TextColor = ColorBlack
 	
 	b.SetFont(style.FontFamily, style.FontStyle, style.FontSize)
 	b.SetTextColor(style.TextColor)
 	
-	// Simplified Header: Always Center
-	if b.options.HeaderText != "" {
-		b.drawTextWithPlaceholders(b.options.HeaderText, AlignCenter)
-	} else {
-		// Default header if none provided
-		b.drawTextWithPlaceholders("Generated Report", AlignCenter)
-	}
+	// Set Y position at top margin
+	b.pdf.SetY(b.options.Margin - 5)
+	
+	// Draw centered header text
+	b.drawTextWithPlaceholders(b.options.HeaderText, AlignCenter)
 }
 
 func (b *Builder) drawFooter() {
@@ -389,80 +396,94 @@ func (b *Builder) Cell(w, h float64, text string, style Style) error {
 }
 
 // wrapText splits text into multiple lines that fit within maxWidth
+// Optimized for memory efficiency with large text
 func (b *Builder) wrapText(text string, maxWidth float64) []string {
 	if text == "" {
 		return []string{""}
 	}
 	
-	// Check if text fits in one line
+	// Quick check if text fits in one line
 	textWidth := b.MeasureTextWidth(text)
 	if textWidth <= maxWidth {
 		return []string{text}
 	}
 	
-	var lines []string
-	words := strings.Fields(text)
+	// Pre-allocate with estimated capacity
+	estimatedLines := int(textWidth/maxWidth) + 1
+	lines := make([]string, 0, estimatedLines)
 	
+	words := strings.Fields(text)
 	if len(words) == 0 {
 		return []string{text}
 	}
 	
-	currentLine := ""
+	// Use strings.Builder for efficient string concatenation
+	var currentLine strings.Builder
+	currentLine.Grow(128) // Pre-allocate buffer
+	
 	for _, word := range words {
-		testLine := currentLine
-		if testLine != "" {
-			testLine += " "
+		testLen := currentLine.Len()
+		if testLen > 0 {
+			testLen++ // for space
 		}
-		testLine += word
+		testLen += len(word)
+		
+		// Build test string only if needed
+		var testLine string
+		if currentLine.Len() > 0 {
+			testLine = currentLine.String() + " " + word
+		} else {
+			testLine = word
+		}
 		
 		testWidth := b.MeasureTextWidth(testLine)
 		if testWidth <= maxWidth {
-			currentLine = testLine
+			if currentLine.Len() > 0 {
+				currentLine.WriteString(" ")
+			}
+			currentLine.WriteString(word)
 		} else {
 			// Current line is full, start a new line
-			if currentLine != "" {
-				lines = append(lines, currentLine)
+			if currentLine.Len() > 0 {
+				lines = append(lines, currentLine.String())
+				currentLine.Reset()
 			}
 			// Check if single word is too long
 			wordWidth := b.MeasureTextWidth(word)
 			if wordWidth > maxWidth {
 				// Break word into chunks
-				currentLine = b.breakLongWord(word, maxWidth, &lines)
+				remainder := b.breakLongWordOptimized(word, maxWidth, &lines)
+				currentLine.WriteString(remainder)
 			} else {
-				currentLine = word
+				currentLine.WriteString(word)
 			}
 		}
 	}
 	
 	// Add remaining text
-	if currentLine != "" {
-		lines = append(lines, currentLine)
-	}
-	
-	// Limit to max 3 lines to prevent cell overflow
-	if len(lines) > 3 {
-		lines = lines[:3]
-		if len(lines[2]) > 3 {
-			lines[2] = lines[2][:len(lines[2])-3] + "..."
-		}
+	if currentLine.Len() > 0 {
+		lines = append(lines, currentLine.String())
 	}
 	
 	return lines
 }
 
-// breakLongWord breaks a long word that doesn't fit in one line
-func (b *Builder) breakLongWord(word string, maxWidth float64, lines *[]string) string {
-	result := ""
+// breakLongWordOptimized breaks a long word that doesn't fit in one line (memory optimized)
+func (b *Builder) breakLongWordOptimized(word string, maxWidth float64, lines *[]string) string {
+	var current strings.Builder
+	current.Grow(len(word))
+	
 	for _, char := range word {
-		testStr := result + string(char)
+		testStr := current.String() + string(char)
 		if b.MeasureTextWidth(testStr) > maxWidth {
-			*lines = append(*lines, result)
-			result = string(char)
-		} else {
-			result = testStr
+			if current.Len() > 0 {
+				*lines = append(*lines, current.String())
+				current.Reset()
+			}
 		}
+		current.WriteRune(char)
 	}
-	return result
+	return current.String()
 }
 
 // truncateText truncates text to fit within maxWidth (used for single-line cells)
@@ -525,14 +546,27 @@ func (b *Builder) NeedsNewPage(height float64) bool {
 	return b.currentY+height > pageHeight-b.options.Margin
 }
 
-// DrawTable draws a complete table from data
+// DrawTable draws a complete table from data (for smaller datasets)
+// For large datasets, use DrawTableStreaming instead
 func (b *Builder) DrawTable(headers []string, rows [][]string, colWidths []float64) error {
 	style := DefaultStyle()
 	headerStyle := HeaderStyle()
 
+	// Apply custom cell padding
+	if b.options.CellPadding > 0 {
+		style.Padding = b.options.CellPadding
+		headerStyle.Padding = b.options.CellPadding
+	}
+
 	// Apply custom styles if set
 	if b.options.HeaderColor != "" {
 		headerStyle.FillColor = ParseHexColor(b.options.HeaderColor)
+	}
+	if b.options.HeaderTextColor != "" {
+		headerStyle.TextColor = ParseHexColor(b.options.HeaderTextColor)
+	}
+	if b.options.RowTextColor != "" {
+		style.TextColor = ParseHexColor(b.options.RowTextColor)
 	}
 	if b.options.BorderColor != "" {
 		c := ParseHexColor(b.options.BorderColor)
@@ -541,6 +575,16 @@ func (b *Builder) DrawTable(headers []string, rows [][]string, colWidths []float
 	}
 	style.HasBorder = b.options.ShowGridLines
 	headerStyle.HasBorder = b.options.ShowGridLines
+
+	// Apply header font settings
+	if b.options.HeaderFontSize > 0 {
+		headerStyle.FontSize = b.options.HeaderFontSize
+	}
+	if b.options.HeaderFontBold {
+		headerStyle.FontStyle = "B"
+	} else {
+		headerStyle.FontStyle = ""
+	}
 
 	// Row height will be dynamic per row
 	baseLineHeight := style.FontSize * 1.2
@@ -557,13 +601,18 @@ func (b *Builder) DrawTable(headers []string, rows [][]string, colWidths []float
 		startX = b.options.Margin + (contentWidth-tableWidth)/2
 	}
 
+	// Pre-calculate header height
+	var headerHeight float64
+	if b.options.HeaderHeight > 0 {
+		headerHeight = b.options.HeaderHeight
+	} else {
+		headerHeight = baseLineHeight + (headerStyle.Padding * 2) + 4
+	}
+
 	// Draw headers
 	if len(headers) > 0 && b.options.HeaderRow {
 		b.SetFont(headerStyle.FontFamily, headerStyle.FontStyle, headerStyle.FontSize)
 		b.pdf.SetX(startX)
-
-		// Calculate header height once
-		headerHeight := (baseLineHeight) + (headerStyle.Padding * 2) + 4
 
 		for i, header := range headers {
 			if i < len(colWidths) {
@@ -575,25 +624,29 @@ func (b *Builder) DrawTable(headers []string, rows [][]string, colWidths []float
 		b.NewLineAt(headerHeight, startX)
 	}
 
-
 	// Draw data rows
 	b.SetFont(style.FontFamily, style.FontStyle, style.FontSize)
 	totalRows := len(rows)
 	lastProgress := -1
 	
+	// Pre-calculate max widths for text wrapping
+	maxWidths := make([]float64, len(colWidths))
+	for i, w := range colWidths {
+		maxWidths[i] = w - (style.Padding * 2)
+	}
+	
 	for rowIdx, row := range rows {
-		// Report progress
+		// Report progress every 5%
 		if b.onProgress != nil {
 			percent := int(float64(rowIdx) * 100 / float64(totalRows))
-			if percent != lastProgress && percent%5 == 0 { // Report every 5%
+			if percent != lastProgress && percent%5 == 0 {
 				b.onProgress(percent)
 				lastProgress = percent
 			}
 		}
 
-
-
-		rowStyle := style // Use base style with custom border color
+		// Reuse rowStyle, only modify when needed
+		rowStyle := style
 		if rowIdx%2 == 1 {
 			if b.options.RowColor != "" {
 				rowStyle.FillColor = ParseHexColor(b.options.RowColor)
@@ -603,32 +656,30 @@ func (b *Builder) DrawTable(headers []string, rows [][]string, colWidths []float
 			rowStyle.HasBackground = true
 		}
 		
-		// Calculate max lines for this row
-		maxLines := 1
-		for i, cell := range row {
-			if i < len(colWidths) {
-				maxWidth := colWidths[i] - (style.Padding * 2)
-				lines := b.wrapText(cell, maxWidth)
-				if len(lines) > maxLines {
-					maxLines = len(lines)
+		// Calculate row height
+		var currentRowHeight float64
+		if b.options.RowHeight > 0 {
+			currentRowHeight = b.options.RowHeight
+		} else {
+			maxLines := 1
+			for i, cell := range row {
+				if i < len(maxWidths) {
+					lines := b.wrapText(cell, maxWidths[i])
+					if len(lines) > maxLines {
+						maxLines = len(lines)
+					}
 				}
 			}
+			currentRowHeight = (baseLineHeight * float64(maxLines)) + (style.Padding * 2) + 4
 		}
-		
-		// Calculate dynamic row height
-		currentRowHeight := (baseLineHeight * float64(maxLines)) + (style.Padding * 2) + 4
 
-		// Check new page again with dynamic height
+		// Check for new page
 		if b.NeedsNewPage(currentRowHeight) {
 			b.AddPage()
-			// Redraw headers... (omitted full repeat for brevity, using simplified check)
-			// Note: The previous logic inside loop handles basic pagination but 
-			// checking here prevents splitting a large row.
-			// Re-draw headers logic similar to above...
+			// Re-draw headers on new page
 			if b.options.HeaderRow && len(headers) > 0 {
 				b.SetFont(headerStyle.FontFamily, headerStyle.FontStyle, headerStyle.FontSize)
 				b.pdf.SetX(startX)
-				headerHeight := (baseLineHeight) + (headerStyle.Padding * 2) + 4
 				for i, header := range headers {
 					if i < len(colWidths) {
 						b.Cell(colWidths[i], headerHeight, header, headerStyle)
@@ -643,13 +694,10 @@ func (b *Builder) DrawTable(headers []string, rows [][]string, colWidths []float
 
 		for i, cell := range row {
 			if i < len(colWidths) {
-				// Detect alignment based on content (simple heuristic)
 				cellStyle := rowStyle
 				if isNumeric(cell) {
 					cellStyle.Alignment = AlignRight
 				}
-				
-				// Use the calculated row height so cells are uniform
 				if err := b.Cell(colWidths[i], currentRowHeight, cell, cellStyle); err != nil {
 					return err
 				}
@@ -721,4 +769,166 @@ func isNumeric(s string) bool {
 // GetPdf returns the underlying GoPdf instance for advanced operations
 func (b *Builder) GetPdf() *gopdf.GoPdf {
 	return b.pdf
+}
+
+// RowIterator interface for streaming row data
+type RowIterator interface {
+	Next() bool
+	Columns() ([]string, error)
+}
+
+// DrawTableStreaming draws a table from streaming row data (memory efficient)
+func (b *Builder) DrawTableStreaming(headers []string, rows RowIterator, colWidths []float64, hasHeaderRow bool) error {
+	style := DefaultStyle()
+	headerStyle := HeaderStyle()
+
+	// Apply custom cell padding
+	if b.options.CellPadding > 0 {
+		style.Padding = b.options.CellPadding
+		headerStyle.Padding = b.options.CellPadding
+	}
+
+	// Apply custom styles
+	if b.options.HeaderColor != "" {
+		headerStyle.FillColor = ParseHexColor(b.options.HeaderColor)
+	}
+	if b.options.HeaderTextColor != "" {
+		headerStyle.TextColor = ParseHexColor(b.options.HeaderTextColor)
+	}
+	if b.options.RowTextColor != "" {
+		style.TextColor = ParseHexColor(b.options.RowTextColor)
+	}
+	if b.options.BorderColor != "" {
+		c := ParseHexColor(b.options.BorderColor)
+		style.BorderColor = c
+		headerStyle.BorderColor = c
+	}
+	style.HasBorder = b.options.ShowGridLines
+	headerStyle.HasBorder = b.options.ShowGridLines
+
+	if b.options.HeaderFontSize > 0 {
+		headerStyle.FontSize = b.options.HeaderFontSize
+	}
+	if b.options.HeaderFontBold {
+		headerStyle.FontStyle = "B"
+	} else {
+		headerStyle.FontStyle = ""
+	}
+
+	baseLineHeight := style.FontSize * 1.2
+
+	// Calculate table positioning
+	tableWidth := 0.0
+	for _, w := range colWidths {
+		tableWidth += w
+	}
+	
+	startX := b.options.Margin
+	contentWidth := b.options.ContentWidth()
+	if tableWidth < contentWidth {
+		startX = b.options.Margin + (contentWidth-tableWidth)/2
+	}
+
+	// Calculate header height
+	var headerHeight float64
+	if b.options.HeaderHeight > 0 {
+		headerHeight = b.options.HeaderHeight
+	} else {
+		headerHeight = baseLineHeight + (headerStyle.Padding * 2) + 4
+	}
+
+	// Draw headers if provided
+	if len(headers) > 0 && hasHeaderRow {
+		b.SetFont(headerStyle.FontFamily, headerStyle.FontStyle, headerStyle.FontSize)
+		b.pdf.SetX(startX)
+		for i, header := range headers {
+			if i < len(colWidths) {
+				b.Cell(colWidths[i], headerHeight, header, headerStyle)
+			}
+		}
+		b.NewLineAt(headerHeight, startX)
+	}
+
+	// Stream rows
+	b.SetFont(style.FontFamily, style.FontStyle, style.FontSize)
+	rowIdx := 0
+	skipFirst := hasHeaderRow // Skip first row if it's the header
+
+	for rows.Next() {
+		row, err := rows.Columns()
+		if err != nil {
+			continue
+		}
+
+		// Skip header row in data
+		if skipFirst {
+			skipFirst = false
+			continue
+		}
+
+		// Progress reporting every 1000 rows
+		if b.onProgress != nil && rowIdx%1000 == 0 {
+			b.onProgress(rowIdx / 100) // Approximate progress
+		}
+
+		rowStyle := style
+		if rowIdx%2 == 1 {
+			if b.options.RowColor != "" {
+				rowStyle.FillColor = ParseHexColor(b.options.RowColor)
+			} else {
+				rowStyle.FillColor = ColorLightGray
+			}
+			rowStyle.HasBackground = true
+		}
+
+		// Calculate row height
+		var currentRowHeight float64
+		if b.options.RowHeight > 0 {
+			currentRowHeight = b.options.RowHeight
+		} else {
+			maxLines := 1
+			for i, cell := range row {
+				if i < len(colWidths) {
+					maxWidth := colWidths[i] - (style.Padding * 2)
+					lines := b.wrapText(cell, maxWidth)
+					if len(lines) > maxLines {
+						maxLines = len(lines)
+					}
+				}
+			}
+			currentRowHeight = (baseLineHeight * float64(maxLines)) + (style.Padding * 2) + 4
+		}
+
+		// Check for new page
+		if b.NeedsNewPage(currentRowHeight) {
+			b.AddPage()
+			// Redraw headers
+			if len(headers) > 0 && hasHeaderRow {
+				b.SetFont(headerStyle.FontFamily, headerStyle.FontStyle, headerStyle.FontSize)
+				b.pdf.SetX(startX)
+				for i, header := range headers {
+					if i < len(colWidths) {
+						b.Cell(colWidths[i], headerHeight, header, headerStyle)
+					}
+				}
+				b.NewLineAt(headerHeight, startX)
+				b.SetFont(style.FontFamily, style.FontStyle, style.FontSize)
+			}
+		}
+
+		b.pdf.SetX(startX)
+		for i, cell := range row {
+			if i < len(colWidths) {
+				cellStyle := rowStyle
+				if isNumeric(cell) {
+					cellStyle.Alignment = AlignRight
+				}
+				b.Cell(colWidths[i], currentRowHeight, cell, cellStyle)
+			}
+		}
+		b.NewLineAt(currentRowHeight, startX)
+		rowIdx++
+	}
+
+	return nil
 }

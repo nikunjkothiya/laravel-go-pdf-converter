@@ -14,19 +14,26 @@ import (
 // ExcelConverter handles Excel (XLSX/XLS) to PDF conversion
 type ExcelConverter struct {
 	opts    pdf.Options
-	maxRows int // Maximum rows to process (0 = unlimited)
 	onProgress func(int)
 }
 
-// MaxRowsDefault is the default maximum number of rows to process
-// This prevents memory issues and timeouts with very large files
-const MaxRowsDefault = 10000
+// excelRowIterator adapts excelize.Rows to pdf.RowIterator interface
+type excelRowIterator struct {
+	rows *excelize.Rows
+}
+
+func (e *excelRowIterator) Next() bool {
+	return e.rows.Next()
+}
+
+func (e *excelRowIterator) Columns() ([]string, error) {
+	return e.rows.Columns()
+}
 
 // NewExcelConverter creates a new Excel converter
 func NewExcelConverter() *ExcelConverter {
 	return &ExcelConverter{
 		opts:    pdf.DefaultOptions(),
-		maxRows: MaxRowsDefault,
 	}
 }
 
@@ -63,15 +70,18 @@ func (c *ExcelConverter) Validate(inputPath string) error {
 	return nil
 }
 
-// Convert performs the Excel to PDF conversion
+// Convert performs the Excel to PDF conversion using streaming for large files
 func (c *ExcelConverter) Convert(inputPath, outputPath string, opts pdf.Options) error {
 	// Validate input
 	if err := c.Validate(inputPath); err != nil {
 		return err
 	}
 
-	// Open Excel file
-	f, err := excelize.OpenFile(inputPath)
+	// Open Excel file with memory optimization options
+	f, err := excelize.OpenFile(inputPath, excelize.Options{
+		UnzipSizeLimit: 100 << 20, // 100MB limit
+		UnzipXMLSizeLimit: 50 << 20, // 50MB XML limit
+	})
 	if err != nil {
 		return errors.NewWithDetails(errors.ErrConversionFailed, "Failed to open Excel file", inputPath, err.Error())
 	}
@@ -90,66 +100,58 @@ func (c *ExcelConverter) Convert(inputPath, outputPath string, opts pdf.Options)
 	// Get all sheets
 	sheets := f.GetSheetList()
 
-	for sheetIndex, sheetName := range sheets {
-		// Add new page for each sheet (except first)
-		if sheetIndex > 0 {
-			builder.AddPage()
-		} else {
-			builder.AddPage()
-		}
+	for _, sheetName := range sheets {
+		// Add new page for each sheet
+		builder.AddPage()
 
 		// Add sheet name as title
-		titleStyle := pdf.HeaderStyle()
-		titleStyle.FontSize = 14
-		// Sheet title removed as per user request
 		builder.NewLine(10)
 
-		// Get all rows from the sheet
-		rows, err := f.GetRows(sheetName)
+		// Use streaming reader for large files to avoid memory issues
+		streamRows, err := f.Rows(sheetName)
 		if err != nil {
 			continue // Skip sheet on error
 		}
+		
+		// First pass: sample rows for column width calculation (memory efficient)
+		var sampleRows [][]string
+		rowCount := 0
+		for streamRows.Next() && rowCount < 100 {
+			row, err := streamRows.Columns()
+			if err != nil {
+				continue
+			}
+			sampleRows = append(sampleRows, row)
+			rowCount++
+		}
+		streamRows.Close()
 
-		if len(rows) == 0 {
+		if len(sampleRows) == 0 {
 			continue // Skip empty sheets
 		}
 
-		// Apply row limit to prevent memory issues and timeouts
-		truncated := false
-		if c.maxRows > 0 && len(rows) > c.maxRows {
-			rows = rows[:c.maxRows]
-			truncated = true
-		}
+		// Calculate column widths from sample
+		colWidths := c.calculateColumnWidths(sampleRows, opts)
 
-		// Calculate column widths (sample first 100 rows for performance)
-		colWidths := c.calculateColumnWidths(rows, opts)
-
-		// Prepare headers and data
+		// Prepare headers
 		var headers []string
-		var dataRows [][]string
-
-		if opts.HeaderRow && len(rows) > 0 {
-			headers = rows[0]
-			// Center headers
-			headerStyle := pdf.HeaderStyle()
-			headerStyle.Alignment = pdf.AlignCenter
-			
-			if len(rows) > 1 {
-				dataRows = rows[1:]
-			}
-		} else {
-			dataRows = rows
+		if opts.HeaderRow && len(sampleRows) > 0 {
+			headers = sampleRows[0]
 		}
 
-		// Add truncation notice if file was too large
-		if truncated {
-			dataRows = append(dataRows, []string{fmt.Sprintf("... (Showing first %d rows, file truncated for performance)", c.maxRows)})
+		// Second pass: stream rows directly to PDF (memory efficient)
+		streamRows, err = f.Rows(sheetName)
+		if err != nil {
+			continue
 		}
 
-		// Draw the table
-		if err := builder.DrawTable(headers, dataRows, colWidths); err != nil {
+		// Draw table with streaming using adapter
+		rowIterator := &excelRowIterator{rows: streamRows}
+		if err := builder.DrawTableStreaming(headers, rowIterator, colWidths, opts.HeaderRow); err != nil {
+			streamRows.Close()
 			return errors.Wrap(err, errors.ErrConversionFailed, "Failed to draw table")
 		}
+		streamRows.Close()
 	}
 
 	// Save the PDF
@@ -167,8 +169,11 @@ func (c *ExcelConverter) ConvertWithOptions(inputPath, outputPath string, opts p
 		return err
 	}
 
-	// Open Excel file
-	f, err := excelize.OpenFile(inputPath)
+	// Open Excel file with memory optimization
+	f, err := excelize.OpenFile(inputPath, excelize.Options{
+		UnzipSizeLimit: 100 << 20,
+		UnzipXMLSizeLimit: 50 << 20,
+	})
 	if err != nil {
 		return errors.NewWithDetails(errors.ErrConversionFailed, "Failed to open Excel file", inputPath, err.Error())
 	}
@@ -189,57 +194,67 @@ func (c *ExcelConverter) ConvertWithOptions(inputPath, outputPath string, opts p
 		sheetNames = f.GetSheetList()
 	}
 
-	for sheetIndex, sheetName := range sheetNames {
+	for sheetIdx, sheetName := range sheetNames {
 		// Verify sheet exists
-		sheetIndex2, err := f.GetSheetIndex(sheetName)
-		if err != nil || sheetIndex2 < 0 {
+		sheetIndex, err := f.GetSheetIndex(sheetName)
+		if err != nil || sheetIndex < 0 {
 			continue // Skip non-existent sheets
 		}
 
 		// Add new page for each sheet (except first)
-		if sheetIndex > 0 {
+		if sheetIdx > 0 {
 			builder.AddPage()
 		} else {
 			builder.AddPage()
 		}
 
-		// Add sheet name as title
-		titleStyle := pdf.HeaderStyle()
-		titleStyle.FontSize = 14
-		// Sheet title removed as per user request
 		builder.NewLine(10)
 
-		// Get all rows from the sheet
-		rows, err := f.GetRows(sheetName)
+		// Use streaming reader - sample first for column widths
+		streamRows, err := f.Rows(sheetName)
 		if err != nil {
 			continue
 		}
+		
+		var sampleRows [][]string
+		rowCount := 0
+		for streamRows.Next() && rowCount < 100 {
+			row, err := streamRows.Columns()
+			if err != nil {
+				continue
+			}
+			sampleRows = append(sampleRows, row)
+			rowCount++
+		}
+		streamRows.Close()
 
-		if len(rows) == 0 {
+		if len(sampleRows) == 0 {
 			builder.AddText("(Empty sheet)", pdf.DefaultStyle())
 			continue
 		}
 
 		// Calculate column widths
-		colWidths := c.calculateColumnWidths(rows, opts)
+		colWidths := c.calculateColumnWidths(sampleRows, opts)
 
-		// Prepare headers and data
+		// Prepare headers
 		var headers []string
-		var dataRows [][]string
-
-		if opts.HeaderRow && len(rows) > 0 {
-			headers = rows[0]
-			if len(rows) > 1 {
-				dataRows = rows[1:]
-			}
-		} else {
-			dataRows = rows
+		if opts.HeaderRow && len(sampleRows) > 0 {
+			headers = sampleRows[0]
 		}
 
-		// Draw the table
-		if err := builder.DrawTable(headers, dataRows, colWidths); err != nil {
+		// Second pass: stream to PDF
+		streamRows, err = f.Rows(sheetName)
+		if err != nil {
+			continue
+		}
+
+		// Use adapter for streaming
+		rowIterator := &excelRowIterator{rows: streamRows}
+		if err := builder.DrawTableStreaming(headers, rowIterator, colWidths, opts.HeaderRow); err != nil {
+			streamRows.Close()
 			return errors.Wrap(err, errors.ErrConversionFailed, "Failed to draw table")
 		}
+		streamRows.Close()
 	}
 
 	// Save the PDF
@@ -325,9 +340,15 @@ func (c *ExcelConverter) calculateColumnWidths(rows [][]string, opts pdf.Options
 		}
 	}
 
-	// Apply min/max constraints - use reasonable minimums to prevent truncation
-	const minColWidth = 40.0  // Minimum to show ~6 chars
-	const maxColWidth = 180.0 // Maximum for any single column
+	// Use custom min/max from options, or defaults
+	minColWidth := opts.MinColumnWidth
+	maxColWidth := opts.MaxColumnWidth
+	if minColWidth <= 0 {
+		minColWidth = 40.0
+	}
+	if maxColWidth <= 0 {
+		maxColWidth = 180.0
+	}
 
 	for i := range colMaxWidths {
 		if colMaxWidths[i] < minColWidth {

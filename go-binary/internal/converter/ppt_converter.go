@@ -93,14 +93,18 @@ func (c *PPTConverter) Convert(inputPath, outputPath string, opts pdf.Options) e
 		return err
 	}
 
+	// For PowerPoint, use only general options (page size, margins, watermark, header/footer)
+	// Ignore table-specific customization options (they only apply to spreadsheets)
+	pptOpts := c.sanitizeOptionsForPPT(opts)
+
 	// Create PDF
-	builder, err := pdf.NewBuilder(opts)
+	builder, err := pdf.NewBuilder(pptOpts)
 	if err != nil {
 		return errors.Wrap(err, errors.ErrConversionFailed, "Failed to create PDF builder")
 	}
 
 	// Render slides
-	c.renderSlides(builder, slides, opts)
+	c.renderSlides(builder, slides, pptOpts)
 
 	// Save PDF
 	if err := builder.Save(outputPath); err != nil {
@@ -356,4 +360,46 @@ func (c *PPTConverter) renderSlides(builder *pdf.Builder, slides []PPTSlide, opt
 		builder.NewLine(noteStyle.FontSize + 4)
 		builder.AddText("2. Installing LibreOffice for full fidelity conversion", noteStyle)
 	}
+}
+
+// sanitizeOptionsForPPT returns options with only general settings applied
+// Table-specific customization options (styling, row/cell settings) are reset to defaults
+// as they only apply to spreadsheet formats (CSV, XLS, XLSX)
+func (c *PPTConverter) sanitizeOptionsForPPT(opts pdf.Options) pdf.Options {
+	// Start with default options
+	pptOpts := pdf.DefaultOptions()
+	
+	// Keep general page options
+	pptOpts.PageSize = opts.PageSize
+	pptOpts.Orientation = opts.Orientation
+	pptOpts.Margin = opts.Margin
+	pptOpts.FontFamily = opts.FontFamily
+	pptOpts.FontSize = opts.FontSize
+	
+	// Keep metadata options
+	pptOpts.Title = opts.Title
+	pptOpts.Author = opts.Author
+	pptOpts.Subject = opts.Subject
+	
+	// Keep header/footer options
+	pptOpts.HeaderText = opts.HeaderText
+	pptOpts.FooterText = opts.FooterText
+	
+	// Keep watermark options
+	pptOpts.CustomFontPath = opts.CustomFontPath
+	pptOpts.WatermarkText = opts.WatermarkText
+	pptOpts.WatermarkImage = opts.WatermarkImage
+	pptOpts.WatermarkAlpha = opts.WatermarkAlpha
+	
+	// Keep quality options
+	pptOpts.Compression = opts.Compression
+	pptOpts.Quality = opts.Quality
+	
+	// Ignore table-specific options (use defaults):
+	// - HeaderColor, HeaderTextColor, RowColor, RowTextColor, BorderColor
+	// - ShowGridLines, RowHeight, HeaderHeight, CellPadding
+	// - MinColumnWidth, MaxColumnWidth, HeaderFontSize, HeaderFontBold
+	// - HeaderRow, AutoWidth, AutoOrientation
+	
+	return pptOpts
 }

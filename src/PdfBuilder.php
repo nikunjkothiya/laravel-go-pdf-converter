@@ -289,6 +289,87 @@ class PdfBuilder
     }
 
     /**
+     * Set custom row height (0 = auto)
+     */
+    public function rowHeight(float $height): self
+    {
+        $this->options['row_height'] = $height;
+        return $this;
+    }
+
+    /**
+     * Set custom header row height (0 = auto)
+     */
+    public function headerHeight(float $height): self
+    {
+        $this->options['header_height'] = $height;
+        return $this;
+    }
+
+    /**
+     * Set cell padding in points
+     */
+    public function cellPadding(float $padding): self
+    {
+        $this->options['cell_padding'] = $padding;
+        return $this;
+    }
+
+    /**
+     * Set minimum column width
+     */
+    public function minColumnWidth(float $width): self
+    {
+        $this->options['min_col_width'] = $width;
+        return $this;
+    }
+
+    /**
+     * Set maximum column width
+     */
+    public function maxColumnWidth(float $width): self
+    {
+        $this->options['max_col_width'] = $width;
+        return $this;
+    }
+
+    /**
+     * Set header text color (hex)
+     */
+    public function headerTextColor(string $hex): self
+    {
+        $this->options['header_text_color'] = $hex;
+        return $this;
+    }
+
+    /**
+     * Set row text color (hex)
+     */
+    public function rowTextColor(string $hex): self
+    {
+        $this->options['row_text_color'] = $hex;
+        return $this;
+    }
+
+    /**
+     * Set header font size (0 = auto)
+     */
+    public function headerFontSize(float $size): self
+    {
+        $this->options['header_font_size'] = $size;
+        return $this;
+    }
+
+    /**
+     * Set header text bold
+     */
+    public function headerBold(bool $bold = true): self
+    {
+        $this->options['header_bold'] = $bold;
+        return $this;
+    }
+
+    /**
      * Add custom option
      */
     public function option(string $key, mixed $value): self

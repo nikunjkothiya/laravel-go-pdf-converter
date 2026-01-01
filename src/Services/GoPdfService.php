@@ -406,14 +406,45 @@ class GoPdfService
         if (isset($options['header_color'])) {
             $command[] = '--header-color=' . $options['header_color'];
         }
+        if (isset($options['header_text_color'])) {
+            $command[] = '--header-text-color=' . $options['header_text_color'];
+        }
         if (isset($options['row_color'])) {
             $command[] = '--row-color=' . $options['row_color'];
+        }
+        if (isset($options['row_text_color'])) {
+            $command[] = '--row-text-color=' . $options['row_text_color'];
         }
         if (isset($options['border_color'])) {
             $command[] = '--border-color=' . $options['border_color'];
         }
         if (isset($options['grid_lines'])) {
             $command[] = '--grid-lines=' . ($options['grid_lines'] ? 'true' : 'false');
+        }
+
+        // Row & Cell customization
+        if (isset($options['row_height']) && $options['row_height'] > 0) {
+            $command[] = '--row-height=' . $options['row_height'];
+        }
+        if (isset($options['header_height']) && $options['header_height'] > 0) {
+            $command[] = '--header-height=' . $options['header_height'];
+        }
+        if (isset($options['cell_padding'])) {
+            $command[] = '--cell-padding=' . $options['cell_padding'];
+        }
+        if (isset($options['min_col_width'])) {
+            $command[] = '--min-col-width=' . $options['min_col_width'];
+        }
+        if (isset($options['max_col_width'])) {
+            $command[] = '--max-col-width=' . $options['max_col_width'];
+        }
+
+        // Font styling
+        if (isset($options['header_font_size']) && $options['header_font_size'] > 0) {
+            $command[] = '--header-font-size=' . $options['header_font_size'];
+        }
+        if (isset($options['header_bold'])) {
+            $command[] = '--header-bold=' . ($options['header_bold'] ? 'true' : 'false');
         }
 
         // Smart Layout

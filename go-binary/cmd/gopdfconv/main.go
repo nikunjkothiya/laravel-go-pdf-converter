@@ -63,9 +63,22 @@ func main() {
 	
 	// Styling options
 	headerColor := flag.String("header-color", "", "Header background color (hex)")
+	headerTextColor := flag.String("header-text-color", "", "Header text color (hex)")
 	rowColor := flag.String("row-color", "", "Alternating row color (hex)")
+	rowTextColor := flag.String("row-text-color", "", "Row text color (hex)")
 	borderColor := flag.String("border-color", "", "Border color (hex)")
 	gridLines := flag.Bool("grid-lines", true, "Show table grid lines")
+	
+	// Row & Cell customization
+	rowHeight := flag.Float64("row-height", 0, "Custom row height in points (0=auto)")
+	headerHeight := flag.Float64("header-height", 0, "Custom header row height in points (0=auto)")
+	cellPadding := flag.Float64("cell-padding", 4, "Cell padding in points")
+	minColWidth := flag.Float64("min-col-width", 40, "Minimum column width in points")
+	maxColWidth := flag.Float64("max-col-width", 180, "Maximum column width in points")
+	
+	// Font styling
+	headerFontSize := flag.Float64("header-font-size", 0, "Header font size (0=auto)")
+	headerFontBold := flag.Bool("header-bold", true, "Make header text bold")
 	
 	// Batch processing
 	batchFiles := flag.String("batch", "", "Comma-separated list of input files")
@@ -107,9 +120,22 @@ func main() {
 	
 	// Styling options
 	opts.HeaderColor = *headerColor
+	opts.HeaderTextColor = *headerTextColor
 	opts.RowColor = *rowColor
+	opts.RowTextColor = *rowTextColor
 	opts.BorderColor = *borderColor
 	opts.ShowGridLines = *gridLines
+	
+	// Row & Cell customization
+	opts.RowHeight = *rowHeight
+	opts.HeaderHeight = *headerHeight
+	opts.CellPadding = *cellPadding
+	opts.MinColumnWidth = *minColWidth
+	opts.MaxColumnWidth = *maxColWidth
+	
+	// Font styling
+	opts.HeaderFontSize = *headerFontSize
+	opts.HeaderFontBold = *headerFontBold
 	
 	// Parse page size
 	switch strings.ToLower(*pageSize) {
